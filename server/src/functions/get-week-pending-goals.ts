@@ -1,15 +1,13 @@
 import dayjs from "dayjs";
-import weekOfYear from "dayjs/plugin/weekOfYear";
 import { db } from "../db";
 import { goalCompletions, goals } from "../db/schema";
 import { and, count, gte, lte, eq, sql } from "drizzle-orm";
 
-dayjs.extend(weekOfYear);
 //a funçao para retornar os metas pendentes
 export async function getWeekPendingGoals() {
   const firstDayOfWeek = dayjs().startOf("week").toDate();
   const lastDayOfWeek = dayjs().endOf("week").toDate();
-  console.log(lastDayOfWeek);
+
   //aqui eu pego todos as metas que foram criados na semana
   const goalsCreatedUpToWeek = db.$with("goals_created_up_to_week").as(
     db
