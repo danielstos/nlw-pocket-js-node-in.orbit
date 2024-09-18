@@ -1,9 +1,7 @@
 import dayjs from "dayjs";
 import { db } from "../db";
 import { goalCompletions, goals } from "../db/schema";
-import { and, count, gte, lte, eq, sql } from "drizzle-orm";
-import { sqliteTable } from "drizzle-orm/sqlite-core";
-import { number } from "zod";
+import { and, gte, lte, eq, sql, desc } from "drizzle-orm";
 
 export async function getWeekSummary() {
   const firstDayOfWeek = dayjs().startOf("week").toDate();
@@ -21,10 +19,10 @@ export async function getWeekSummary() {
       .where(lte(goals.createdAt, lastDayOfWeek))
   );
   //aqui eu pego todos as metas que foram completados na semana
-  const goalsCompletionInWeek = db.$with("goals_completion_in_week").as(
+  const goalsCompletedInWeek = db.$with("goals_completed_in_week").as(
     db
       .select({
-        id: goals.id,
+        id: goalCompletions.id,
         title: goals.title,
         completedAt: goalCompletions.createdAt,
         completedAtDate: sql/*sql*/ `
@@ -39,37 +37,49 @@ export async function getWeekSummary() {
           lte(goalCompletions.createdAt, lastDayOfWeek)
         )
       )
+      .orderBy(desc(goalCompletions.createdAt))
   );
+
+  /**
+   * With CTE que agrupa as completadas por dia da semana
+   * e retorna um JSON com as informa de cada meta completada
+   */
   const goalsCompletedByWeekDay = db.$with("goals_completed_by_week_day").as(
     db
       .select({
-        completedAtDate: goalsCompletionInWeek.completedAtDate,
+        completedAtDate: goalsCompletedInWeek.completedAtDate,
         completions: sql/*sql*/ `
       JSON_AGG(
         JSON_BUILD_OBJECT(
-          'id', ${goalsCompletionInWeek.id},
-          'title', ${goalsCompletionInWeek.title},
-          'completedAt', ${goalsCompletionInWeek.completedAt}
+          'id', ${goalsCompletedInWeek.id},
+          'title', ${goalsCompletedInWeek.title},
+          'completedAt', ${goalsCompletedInWeek.completedAt}
         )
       )
         `.as("completions"),
       })
-      .from(goalsCompletionInWeek)
-      .groupBy(goalsCompletionInWeek.completedAtDate)
+      .from(goalsCompletedInWeek)
+      .groupBy(goalsCompletedInWeek.completedAtDate)
+      .orderBy(desc(goalsCompletedInWeek.completedAtDate))
   );
 
+  type goalsPerDay = Record<
+    string,
+    { id: string; title: string; completedAt: Date }[]
+  >;
+
   const result = await db
-    .with(goalsCreatedUpToWeek, goalsCompletionInWeek, goalsCompletedByWeekDay)
+    .with(goalsCreatedUpToWeek, goalsCompletedInWeek, goalsCompletedByWeekDay)
     .select({
       completed:
-        sql/*sql*/ `(SELECT COUNT(*) FROM ${goalsCompletionInWeek})`.mapWith(
+        sql/*sql*/ `(SELECT COUNT(*) FROM ${goalsCompletedInWeek})`.mapWith(
           Number
         ),
       total:
         sql/*sql*/ `(SELECT SUM(${goalsCreatedUpToWeek.desiredWeeklyFrequency}) FROM ${goalsCreatedUpToWeek})`.mapWith(
           Number
         ),
-      goalsPerDay: sql/*sql*/ ` 
+      goalsPerDay: sql/*sql*/ <goalsPerDay>` 
          JSON_OBJECT_AGG(
           ${goalsCompletedByWeekDay.completedAtDate},
           ${goalsCompletedByWeekDay.completions}
@@ -79,6 +89,6 @@ export async function getWeekSummary() {
     .from(goalsCompletedByWeekDay);
 
   return {
-    summary: result,
+    summary: result[0],
   };
 }
